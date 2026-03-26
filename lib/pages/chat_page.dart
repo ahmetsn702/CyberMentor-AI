@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import '../services/gemini_service.dart';
 
 class ChatPage extends StatefulWidget {
@@ -20,11 +21,9 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void initState() {
     super.initState();
-    // Add a welcome message from the AI
     _messages.add({
       'role': 'assistant',
-      'text':
-          'Merhaba! Ben CyberMentor AI. **${widget.category}** konusunda öğrenmeye hazır mısın? Sorunla başla, seni adım adım çözüme götüreceğim. 🎯',
+      'text': GeminiService.getWelcomeMessage(widget.category),
     });
   }
 
@@ -52,7 +51,10 @@ class _ChatPageState extends State<ChatPage> {
     _apiHistory.add({'role': 'user', 'content': text});
     _scrollToBottom();
 
-    final reply = await GeminiService.sendMessage(_apiHistory);
+    final reply = await GeminiService.sendMessage(
+      _apiHistory,
+      widget.category,
+    );
 
     _apiHistory.add({'role': 'assistant', 'content': reply});
     setState(() {
@@ -77,9 +79,12 @@ class _ChatPageState extends State<ChatPage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('CyberMentor AI'),
             Text(
-              widget.category,
+              '${widget.category} Mentor',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            Text(
+              'CyberMentor AI',
               style: TextStyle(fontSize: 12, color: colorScheme.primary),
             ),
           ],
@@ -217,16 +222,77 @@ class _ChatBubble extends StatelessWidget {
                       : const Radius.circular(20),
                 ),
               ),
-              child: SelectableText(
-                text,
-                style: TextStyle(
-                  color: isUser
-                      ? colorScheme.onPrimary
-                      : colorScheme.onSurface,
-                  fontSize: 15,
-                  height: 1.4,
-                ),
-              ),
+              child: isUser
+                  ? SelectableText(
+                      text,
+                      style: TextStyle(
+                        color: colorScheme.onPrimary,
+                        fontSize: 15,
+                        height: 1.4,
+                      ),
+                    )
+                  : MarkdownBody(
+                      data: text,
+                      selectable: true,
+                      styleSheet: MarkdownStyleSheet(
+                        p: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 15,
+                          height: 1.4,
+                        ),
+                        strong: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        em: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontStyle: FontStyle.italic,
+                        ),
+                        code: TextStyle(
+                          color: colorScheme.primary,
+                          backgroundColor:
+                              colorScheme.primary.withValues(alpha: 0.1),
+                          fontSize: 14,
+                        ),
+                        codeblockDecoration: BoxDecoration(
+                          color: colorScheme.surface,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: colorScheme.outlineVariant,
+                          ),
+                        ),
+                        codeblockPadding: const EdgeInsets.all(12),
+                        listBullet: TextStyle(
+                          color: colorScheme.primary,
+                          fontSize: 15,
+                        ),
+                        blockquoteDecoration: BoxDecoration(
+                          border: Border(
+                            left: BorderSide(
+                              color: colorScheme.primary,
+                              width: 3,
+                            ),
+                          ),
+                        ),
+                        blockquotePadding:
+                            const EdgeInsets.only(left: 12, top: 4, bottom: 4),
+                        h1: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        h2: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        h3: TextStyle(
+                          color: colorScheme.onSurface,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
             ),
           ),
           if (isUser) const SizedBox(width: 8),
