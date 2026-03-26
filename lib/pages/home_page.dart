@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'chat_page.dart';
+import 'profile_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -35,8 +36,11 @@ class _HomePageState extends State<HomePage> {
     },
   ];
 
-  Future<void> _signOut() async {
-    await Supabase.instance.client.auth.signOut();
+  void _openProfile() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const ProfilePage()),
+    );
   }
 
   void _openChat(String category) {
@@ -55,9 +59,9 @@ class _HomePageState extends State<HomePage> {
         title: const Text('CyberMentor AI'),
         actions: [
           IconButton(
-            onPressed: _signOut,
-            icon: const Icon(Icons.logout),
-            tooltip: 'Logout',
+            onPressed: _openProfile,
+            icon: const Icon(Icons.person_rounded),
+            tooltip: 'Profil',
           ),
         ],
       ),
