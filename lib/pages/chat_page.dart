@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../services/claude_service.dart';
+import '../services/gemini_service.dart';
 
 class ChatPage extends StatefulWidget {
   final String category;
@@ -52,7 +52,7 @@ class _ChatPageState extends State<ChatPage> {
     _apiHistory.add({'role': 'user', 'content': text});
     _scrollToBottom();
 
-    final reply = await ClaudeService.sendMessage(_apiHistory);
+    final reply = await GeminiService.sendMessage(_apiHistory);
 
     _apiHistory.add({'role': 'assistant', 'content': reply});
     setState(() {
@@ -217,7 +217,7 @@ class _ChatBubble extends StatelessWidget {
                       : const Radius.circular(20),
                 ),
               ),
-              child: Text(
+              child: SelectableText(
                 text,
                 style: TextStyle(
                   color: isUser
