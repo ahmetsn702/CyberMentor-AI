@@ -11,6 +11,24 @@ class ProfilePage extends StatefulWidget {
 class _ProfilePageState extends State<ProfilePage> {
   final user = Supabase.instance.client.auth.currentUser;
   bool _isLoading = false;
+  int? _totalConversations;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTotalConversations();
+  }
+
+  Future<void> _loadTotalConversations() async {
+    try {
+      final count = await Supabase.instance.client
+          .from('conversations')
+          .count(CountOption.exact);
+      if (mounted) setState(() => _totalConversations = count);
+    } catch (_) {
+      // Leave as null; UI shows '...' placeholder.
+    }
+  }
 
   String _formatDate(String? dateString) {
     if (dateString == null) return 'Bilinmiyor';
@@ -111,7 +129,7 @@ class _ProfilePageState extends State<ProfilePage> {
             _ProfileTile(
               icon: Icons.chat_bubble_outline_rounded,
               title: 'Toplam Sohbet',
-              value: '0',
+              value: _totalConversations?.toString() ?? '...',
             ),
             _ProfileTile(
               icon: Icons.info_outline_rounded,

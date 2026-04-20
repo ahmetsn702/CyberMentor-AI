@@ -1,30 +1,101 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/gemini_service.dart';
 
 class ChatPage extends StatefulWidget {
   final String category;
+  final String? conversationId;
 
-  const ChatPage({super.key, required this.category});
+  const ChatPage({
+    super.key,
+    required this.category,
+    this.conversationId,
+  });
 
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
 
 class _ChatPageState extends State<ChatPage> {
+  final _supabase = Supabase.instance.client;
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
   final List<Map<String, dynamic>> _messages = [];
   final List<Map<String, String>> _apiHistory = [];
   bool _isLoading = false;
+  String? _conversationId;
 
   @override
   void initState() {
     super.initState();
-    _messages.add({
-      'role': 'assistant',
-      'text': GeminiService.getWelcomeMessage(widget.category),
-    });
+    _conversationId = widget.conversationId;
+    if (_conversationId != null) {
+      _loadHistory();
+    } else {
+      _messages.add({
+        'role': 'assistant',
+        'text': GeminiService.getWelcomeMessage(widget.category),
+      });
+    }
+  }
+
+  Future<void> _loadHistory() async {
+    setState(() => _isLoading = true);
+    try {
+      final rows = await _supabase
+          .from('messages')
+          .select('role, content')
+          .eq('conversation_id', _conversationId!)
+          .order('created_at', ascending: true);
+      for (final row in rows) {
+        final role = row['role'] as String;
+        final content = row['content'] as String;
+        _messages.add({'role': role, 'text': content});
+        _apiHistory.add({'role': role, 'content': content});
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Geçmiş yüklenemedi: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+      _scrollToBottom();
+    }
+  }
+
+  Future<void> _ensureConversation(String firstMessage) async {
+    if (_conversationId != null) return;
+    final userId = _supabase.auth.currentUser?.id;
+    if (userId == null) return;
+    final title = firstMessage.length > 50
+        ? '${firstMessage.substring(0, 50)}...'
+        : firstMessage;
+    final row = await _supabase
+        .from('conversations')
+        .insert({
+          'user_id': userId,
+          'category': widget.category,
+          'title': title,
+        })
+        .select('id')
+        .single();
+    _conversationId = row['id'] as String;
+  }
+
+  Future<void> _persistMessage(String role, String content) async {
+    if (_conversationId == null) return;
+    try {
+      await _supabase.from('messages').insert({
+        'conversation_id': _conversationId,
+        'role': role,
+        'content': content,
+      });
+    } catch (_) {
+      // Best-effort; in-memory chat still works.
+    }
   }
 
   void _scrollToBottom() {
@@ -51,6 +122,13 @@ class _ChatPageState extends State<ChatPage> {
     _apiHistory.add({'role': 'user', 'content': text});
     _scrollToBottom();
 
+    try {
+      await _ensureConversation(text);
+    } catch (_) {
+      // Continue in memory if conversation create fails.
+    }
+    await _persistMessage('user', text);
+
     final reply = await GeminiService.sendMessage(
       _apiHistory,
       widget.category,
@@ -62,6 +140,8 @@ class _ChatPageState extends State<ChatPage> {
       _isLoading = false;
     });
     _scrollToBottom();
+
+    await _persistMessage('assistant', reply);
   }
 
   @override
