@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'chat_page.dart';
+import 'history_page.dart';
 import 'profile_page.dart';
 
 class HomePage extends StatefulWidget {
@@ -43,6 +44,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _openHistory() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (context) => const HistoryPage()),
+    );
+  }
+
   void _openChat(String category) {
     Navigator.push(
       context,
@@ -58,6 +66,11 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('CyberMentor AI'),
         actions: [
+          IconButton(
+            onPressed: _openHistory,
+            icon: const Icon(Icons.history_rounded),
+            tooltip: 'Geçmiş',
+          ),
           IconButton(
             onPressed: _openProfile,
             icon: const Icon(Icons.person_rounded),
