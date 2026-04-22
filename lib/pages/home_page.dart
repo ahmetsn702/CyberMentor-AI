@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'challenges_page.dart';
 import 'chat_page.dart';
 import 'history_page.dart';
 import 'profile_page.dart';
@@ -60,6 +61,13 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _openChallenges() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ChallengesPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -117,6 +125,21 @@ class _HomePageState extends State<HomePage> {
                     onTap: () => _openChat(cat['title'] as String),
                   );
                 }).toList(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            // Challenge bankası — kategorilerden farklı bir akış: somut
+            // bir challenge üzerinde AI mentor desteğiyle çalışma.
+            FilledButton.icon(
+              onPressed: _openChallenges,
+              icon: const Icon(Icons.flag_outlined),
+              label: const Text('Challenge Bankası'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(56),
+                textStyle: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],

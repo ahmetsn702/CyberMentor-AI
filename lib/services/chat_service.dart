@@ -28,10 +28,16 @@ class ChatService {
   /// are returned (not thrown) so the chat UI can render them inline as an
   /// assistant bubble — this preserves the contract the previous Gemini
   /// client used.
+  ///
+  /// `challengeId` opsiyoneldir: bir challenge bağlamında açılan konuşmada
+  /// Edge Function bu id'yi DB'den fetch edip solution_context'i sistem
+  /// promptuna ekler — böylece mentor o challenge'a özel ipuçlarıyla
+  /// yönlendirme yapar. Client solution_context'i hiç görmez.
   static Future<String> sendMessage(
     List<Map<String, String>> history,
-    String category,
-  ) async {
+    String category, {
+    String? challengeId,
+  }) async {
     final session = Supabase.instance.client.auth.currentSession;
     if (session == null) {
       return 'Hata: Oturum bulunamadı. Lütfen tekrar giriş yap.';
@@ -43,6 +49,7 @@ class ChatService {
         body: {
           'history': history,
           'category': category,
+          'challenge_id': ?challengeId,
         },
       );
 

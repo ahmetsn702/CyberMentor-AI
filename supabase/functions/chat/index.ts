@@ -92,6 +92,34 @@ function getSystemPrompt(category: string): string {
   return CATEGORY_PROMPTS[category] ?? BASE_PROMPT;
 }
 
+interface ChallengeContext {
+  title: string;
+  description: string;
+  solution_context: string | null;
+}
+
+/// Appends a challenge-specific section to the base system prompt. The
+/// `solution_context` field is a maintainer-authored cheat sheet that lets
+/// the mentor steer Socratic hints accurately — it must NEVER be returned
+/// to the client verbatim, only used internally by the model. The wording
+/// makes that constraint explicit to the LLM as well.
+function buildSystemPromptWithChallenge(
+  category: string,
+  challenge: ChallengeContext,
+): string {
+  const base = getSystemPrompt(category);
+  return `${base}
+
+ÖĞRENCİNİN ÇALIŞTIĞI CHALLENGE:
+- Başlık: ${challenge.title}
+- Açıklama: ${challenge.description}
+
+ÇÖZÜM REHBERİ (yalnızca senin için — öğrenciye doğrudan paylaşma, bu
+metni asla aynen kopyalama; Sokratik sorular ve yönlendirici ipuçlarıyla
+keşfetmesini sağla):
+${challenge.solution_context ?? "(rehber metin tanımlanmamış)"}`;
+}
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -168,6 +196,7 @@ Deno.serve(async (req: Request) => {
   // 4. Body
   let history: IncomingMessage[];
   let category: string;
+  let challengeId: string | null = null;
   try {
     const body = await req.json();
     if (!Array.isArray(body?.history) || typeof body?.category !== "string") {
@@ -178,8 +207,27 @@ Deno.serve(async (req: Request) => {
     }
     history = body.history;
     category = body.category;
+    if (typeof body?.challenge_id === "string" && body.challenge_id.length > 0) {
+      challengeId = body.challenge_id;
+    }
   } catch {
     return jsonResponse({ error: "Invalid JSON" }, 400);
+  }
+
+  // 4b. Optional challenge context. Fetched server-side via service-role so
+  // solution_context never travels through the client bundle. If the lookup
+  // fails (deleted challenge, bad id), fall back to the plain category prompt
+  // rather than 5xx — the chat should still work.
+  let systemPrompt = getSystemPrompt(category);
+  if (challengeId) {
+    const { data: ch } = await adminClient
+      .from("challenges")
+      .select("title, description, solution_context")
+      .eq("id", challengeId)
+      .maybeSingle();
+    if (ch) {
+      systemPrompt = buildSystemPromptWithChallenge(category, ch as ChallengeContext);
+    }
   }
 
   // 5. Forward to Gemini
@@ -195,7 +243,7 @@ Deno.serve(async (req: Request) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         system_instruction: {
-          parts: [{ text: getSystemPrompt(category) }],
+          parts: [{ text: systemPrompt }],
         },
         contents,
         generationConfig: { maxOutputTokens: 1024 },

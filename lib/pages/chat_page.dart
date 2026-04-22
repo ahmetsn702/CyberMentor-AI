@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../models/challenge.dart';
 import '../services/chat_service.dart';
 
 class ChatPage extends StatefulWidget {
   final String category;
   final String? conversationId;
+  final Challenge? challenge;
 
   const ChatPage({
     super.key,
     required this.category,
     this.conversationId,
+    this.challenge,
   });
 
   @override
@@ -37,9 +40,24 @@ class _ChatPageState extends State<ChatPage> {
     } else {
       _messages.add({
         'role': 'assistant',
-        'text': ChatService.getWelcomeMessage(widget.category),
+        'text': _initialWelcomeMessage(),
       });
     }
+  }
+
+  /// Yeni bir konuşma açıldığında gösterilecek karşılama mesajı.
+  /// Challenge bağlamında açıldıysa challenge-aware bir mesaj döner; aksi
+  /// halde kategori için varsayılan karşılama döner.
+  String _initialWelcomeMessage() {
+    final challenge = widget.challenge;
+    if (challenge == null) {
+      return ChatService.getWelcomeMessage(widget.category);
+    }
+    return 'Birlikte **${challenge.title}** challenge\'ı üzerinde çalışacağız.\n\n'
+        '${challenge.description}\n\n'
+        'Nereden başlamak istersin? Hangi adımdan emin değilsin? '
+        'Sokratik yöntemle adım adım ilerleyeceğiz — doğrudan cevap '
+        'beklemek yerine yönlendirici sorular bekle.';
   }
 
   Future<void> _loadHistory() async {
@@ -74,15 +92,22 @@ class _ChatPageState extends State<ChatPage> {
     if (_conversationId != null) return;
     final userId = _supabase.auth.currentUser?.id;
     if (userId == null) return;
-    final title = firstMessage.length > 50
-        ? '${firstMessage.substring(0, 50)}...'
-        : firstMessage;
+    // Challenge bağlamında açıldıysa title olarak challenge başlığını kullan
+    // — geçmiş listesinde "Login Bypass" görmek "admin'-- yazmayı..." dan
+    // çok daha okunaklı.
+    final challenge = widget.challenge;
+    final title = challenge != null
+        ? challenge.title
+        : (firstMessage.length > 50
+            ? '${firstMessage.substring(0, 50)}...'
+            : firstMessage);
     final row = await _supabase
         .from('conversations')
         .insert({
           'user_id': userId,
           'category': widget.category,
           'title': title,
+          if (challenge != null) 'challenge_id': challenge.id,
         })
         .select('id')
         .single();
@@ -211,6 +236,7 @@ class _ChatPageState extends State<ChatPage> {
     final reply = await ChatService.sendMessage(
       _apiHistory,
       widget.category,
+      challengeId: widget.challenge?.id,
     );
 
     _apiHistory.add({'role': 'assistant', 'content': reply});

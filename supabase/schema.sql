@@ -108,3 +108,38 @@ create index if not exists rate_limits_user_request_idx
   on public.rate_limits (user_id, request_at desc);
 
 alter table public.rate_limits enable row level security;
+
+-- Challenge bank: curated educational CTF challenges shown in the
+-- challenges_page UI. Seeded via supabase/seed.sql; clients only read.
+-- solution_context is sent to the Edge Function (never to the client) so
+-- the AI mentor can give targeted Socratic hints without leaking the
+-- full solution.
+create table if not exists public.challenges (
+  id uuid primary key default gen_random_uuid(),
+  slug text unique not null,
+  title text not null,
+  category text not null,
+  difficulty text not null check (difficulty in ('Kolay', 'Orta', 'Zor')),
+  description text not null,
+  hints text[] not null,
+  learning_objective text not null,
+  solution_context text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists challenges_category_difficulty_idx
+  on public.challenges (category, difficulty);
+
+alter table public.challenges enable row level security;
+
+-- Read-only from clients. No insert/update/delete policies — challenges
+-- are managed by maintainers via seed.sql / Supabase dashboard, not users.
+drop policy if exists challenges_select_all on public.challenges;
+create policy challenges_select_all on public.challenges
+  for select using (true);
+
+-- Link a conversation to the challenge it was started from (optional).
+-- on delete set null preserves chat history if a challenge is later removed.
+alter table public.conversations
+  add column if not exists challenge_id uuid references public.challenges(id)
+    on delete set null;
