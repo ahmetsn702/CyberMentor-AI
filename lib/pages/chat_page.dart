@@ -23,15 +23,17 @@ class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
   final List<Map<String, dynamic>> _messages = [];
   final List<Map<String, String>> _apiHistory = [];
+  final Set<String> _knownMessageIds = <String>{};
   bool _isLoading = false;
   String? _conversationId;
+  RealtimeChannel? _channel;
 
   @override
   void initState() {
     super.initState();
     _conversationId = widget.conversationId;
     if (_conversationId != null) {
-      _loadHistory();
+      _loadHistory().then((_) => _subscribeToMessages());
     } else {
       _messages.add({
         'role': 'assistant',
@@ -45,13 +47,15 @@ class _ChatPageState extends State<ChatPage> {
     try {
       final rows = await _supabase
           .from('messages')
-          .select('role, content')
+          .select('id, role, content')
           .eq('conversation_id', _conversationId!)
           .order('created_at', ascending: true);
       for (final row in rows) {
+        final id = row['id'] as String;
         final role = row['role'] as String;
         final content = row['content'] as String;
-        _messages.add({'role': role, 'text': content});
+        _knownMessageIds.add(id);
+        _messages.add({'role': role, 'text': content, 'id': id});
         _apiHistory.add({'role': role, 'content': content});
       }
     } catch (e) {
@@ -83,19 +87,94 @@ class _ChatPageState extends State<ChatPage> {
         .select('id')
         .single();
     _conversationId = row['id'] as String;
+    _subscribeToMessages();
   }
 
   Future<void> _persistMessage(String role, String content) async {
     if (_conversationId == null) return;
     try {
-      await _supabase.from('messages').insert({
-        'conversation_id': _conversationId,
-        'role': role,
-        'content': content,
-      });
+      final row = await _supabase
+          .from('messages')
+          .insert({
+            'conversation_id': _conversationId,
+            'role': role,
+            'content': content,
+          })
+          .select('id')
+          .single();
+      final id = row['id'] as String;
+      _knownMessageIds.add(id);
+      final localIdx = _messages.lastIndexWhere(
+        (m) => m['id'] == null && m['role'] == role && m['text'] == content,
+      );
+      if (localIdx != -1) {
+        _messages[localIdx]['id'] = id;
+      }
     } catch (_) {
       // Best-effort; in-memory chat still works.
     }
+  }
+
+  void _subscribeToMessages() {
+    debugPrint('[Realtime] _subscribeToMessages called '
+        '(conversationId=$_conversationId, channelExists=${_channel != null})');
+    if (_conversationId == null || _channel != null) {
+      debugPrint('[Realtime] _subscribeToMessages skipped');
+      return;
+    }
+    _channel = _supabase
+        .channel('messages:$_conversationId')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: 'public',
+          table: 'messages',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'conversation_id',
+            value: _conversationId!,
+          ),
+          callback: _handleRemoteInsert,
+        )
+        .subscribe((status, [error]) {
+          debugPrint('[Realtime] channel status=$status error=$error');
+        });
+    debugPrint('[Realtime] channel created for messages:$_conversationId');
+  }
+
+  void _handleRemoteInsert(PostgresChangePayload payload) {
+    debugPrint('[Realtime] _handleRemoteInsert fired: newRecord=${payload.newRecord}');
+    final row = payload.newRecord;
+    final id = row['id'] as String?;
+    if (id == null || _knownMessageIds.contains(id)) {
+      debugPrint('[Realtime] skipped (id=$id, known=${_knownMessageIds.contains(id)})');
+      return;
+    }
+
+    final role = row['role'] as String?;
+    final content = row['content'] as String?;
+    if (role == null || content == null) {
+      debugPrint('[Realtime] skipped (missing role/content)');
+      return;
+    }
+
+    // Claim this id for a matching local optimistic message (race:
+    // realtime echo arrives before the insert's REST response).
+    final localIdx = _messages.lastIndexWhere(
+      (m) => m['id'] == null && m['role'] == role && m['text'] == content,
+    );
+    if (localIdx != -1) {
+      _knownMessageIds.add(id);
+      _messages[localIdx]['id'] = id;
+      return;
+    }
+
+    _knownMessageIds.add(id);
+    if (!mounted) return;
+    setState(() {
+      _messages.add({'role': role, 'text': content, 'id': id});
+    });
+    _apiHistory.add({'role': role, 'content': content});
+    _scrollToBottom();
   }
 
   void _scrollToBottom() {
@@ -146,6 +225,10 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   void dispose() {
+    if (_channel != null) {
+      _supabase.removeChannel(_channel!);
+      _channel = null;
+    }
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
