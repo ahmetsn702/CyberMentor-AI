@@ -9,9 +9,16 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  final user = Supabase.instance.client.auth.currentUser;
   bool _isLoading = false;
   int? _totalConversations;
+
+  User? get _user => Supabase.instance.client.auth.currentUser;
+
+  String get _displayName {
+    final raw = _user?.userMetadata?['display_name'];
+    if (raw is String && raw.trim().isNotEmpty) return raw;
+    return _user?.email ?? '';
+  }
 
   @override
   void initState() {
@@ -39,42 +46,103 @@ class _ProfilePageState extends State<ProfilePage> {
         '${date.year}';
   }
 
-  Future<void> _resetPassword() async {
-    final email = user?.email;
-    if (email == null || email.isEmpty) return;
+  void _showError(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Theme.of(context).colorScheme.error,
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _editDisplayName() async {
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (_) => _EditDisplayNameDialog(initial: _displayName),
+    );
+    if (newName == null) return;
 
     setState(() => _isLoading = true);
     try {
-      await Supabase.instance.client.auth.resetPasswordForEmail(email);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Şifre sıfırlama bağlantısı e-postanıza gönderildi.'),
-          ),
-        );
-      }
-    } on AuthException catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(error.message),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Beklenmeyen bir hata oluştu.'),
-            backgroundColor: Theme.of(context).colorScheme.error,
-          ),
-        );
-      }
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(data: {'display_name': newName}),
+      );
+      if (mounted) setState(() {});
+      _showSuccess('Kullanıcı adı güncellendi.');
+    } on AuthException catch (e) {
+      _showError(e.message);
+    } catch (_) {
+      _showError('Kullanıcı adı güncellenemedi.');
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _changePassword() async {
+    final result = await showDialog<({String oldPwd, String newPwd})>(
+      context: context,
+      builder: (_) => const _ChangePasswordDialog(),
+    );
+    if (result == null) return;
+
+    final email = _user?.email;
+    if (email == null) {
+      _showError('Oturum bulunamadı.');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      // Supabase updateUser does not verify the current password — re-sign in
+      // with the old one first so a hijacked session can't silently rotate it.
+      await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: result.oldPwd,
+      );
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(password: result.newPwd),
+      );
+      _showSuccess('Şifreniz güncellendi.');
+    } on AuthException catch (e) {
+      _showError(e.message);
+    } catch (_) {
+      _showError('Şifre güncellenemedi.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _deleteAccount() async {
+    final firstOk = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _DeleteAccountWarningDialog(),
+    );
+    if (firstOk != true || !mounted) return;
+
+    final finalOk = await showDialog<bool>(
+      context: context,
+      builder: (_) => const _DeleteAccountConfirmDialog(),
+    );
+    if (finalOk != true) return;
+
+    setState(() => _isLoading = true);
+    try {
+      await Supabase.instance.client.rpc('delete_user');
+      // Session is now orphaned server-side; clearing it locally trips
+      // AuthGate's listener and routes back to LoginPage.
+      await Supabase.instance.client.auth.signOut();
+    } on PostgrestException catch (e) {
+      _showError('Hesap silinemedi: ${e.message}');
+      if (mounted) setState(() => _isLoading = false);
+    } catch (_) {
+      _showError('Hesap silinemedi.');
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -85,6 +153,9 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final user = _user;
+    final email = user?.email;
+    final showEmailUnderName = email != null && email != _displayName;
 
     return Scaffold(
       appBar: AppBar(
@@ -95,12 +166,11 @@ class _ProfilePageState extends State<ProfilePage> {
         child: Column(
           children: [
             const SizedBox(height: 16),
-            // Avatar
             CircleAvatar(
               radius: 48,
               backgroundColor: colorScheme.primaryContainer,
               child: Text(
-                (user?.email ?? '?')[0].toUpperCase(),
+                _displayName.isNotEmpty ? _displayName[0].toUpperCase() : '?',
                 style: TextStyle(
                   fontSize: 36,
                   fontWeight: FontWeight.bold,
@@ -110,16 +180,34 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             const SizedBox(height: 16),
             Text(
-              user?.email ?? '',
+              _displayName,
               style: Theme.of(context).textTheme.titleMedium,
             ),
+            if (showEmailUnderName) ...[
+              const SizedBox(height: 4),
+              Text(
+                email,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey,
+                    ),
+              ),
+            ],
             const SizedBox(height: 32),
 
-            // Info cards
+            _ProfileTile(
+              icon: Icons.person_outline_rounded,
+              title: 'Kullanıcı Adı',
+              value: _displayName.isEmpty ? 'Belirtilmedi' : _displayName,
+              trailing: IconButton(
+                icon: const Icon(Icons.edit_outlined),
+                tooltip: 'Düzenle',
+                onPressed: _isLoading ? null : _editDisplayName,
+              ),
+            ),
             _ProfileTile(
               icon: Icons.email_outlined,
               title: 'E-posta',
-              value: user?.email ?? 'Bilinmiyor',
+              value: email ?? 'Bilinmiyor',
             ),
             _ProfileTile(
               icon: Icons.calendar_today_rounded,
@@ -138,11 +226,10 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             const SizedBox(height: 32),
 
-            // Actions
             SizedBox(
               width: double.infinity,
               child: OutlinedButton.icon(
-                onPressed: _isLoading ? null : _resetPassword,
+                onPressed: _isLoading ? null : _changePassword,
                 icon: _isLoading
                     ? const SizedBox(
                         width: 18,
@@ -160,12 +247,30 @@ class _ProfilePageState extends State<ProfilePage> {
             SizedBox(
               width: double.infinity,
               child: FilledButton.icon(
-                onPressed: _signOut,
+                onPressed: _isLoading ? null : _signOut,
                 icon: const Icon(Icons.logout_rounded),
                 label: const Text('Çıkış Yap'),
                 style: FilledButton.styleFrom(
                   backgroundColor: colorScheme.error,
                   foregroundColor: colorScheme.onError,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Divider(color: colorScheme.outlineVariant),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isLoading ? null : _deleteAccount,
+                icon: Icon(Icons.delete_forever_rounded, color: colorScheme.error),
+                label: Text(
+                  'Hesabı Sil',
+                  style: TextStyle(color: colorScheme.error),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: colorScheme.error),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
@@ -181,11 +286,13 @@ class _ProfileTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String value;
+  final Widget? trailing;
 
   const _ProfileTile({
     required this.icon,
     required this.title,
     required this.value,
+    this.trailing,
   });
 
   @override
@@ -203,11 +310,243 @@ class _ProfileTile extends StatelessWidget {
           value,
           style: const TextStyle(fontSize: 16),
         ),
+        trailing: trailing,
         tileColor: colorScheme.surfaceContainerHighest,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),
       ),
+    );
+  }
+}
+
+class _EditDisplayNameDialog extends StatefulWidget {
+  final String initial;
+  const _EditDisplayNameDialog({required this.initial});
+
+  @override
+  State<_EditDisplayNameDialog> createState() => _EditDisplayNameDialogState();
+}
+
+class _EditDisplayNameDialogState extends State<_EditDisplayNameDialog> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = _controller.text.trim();
+    if (v.isEmpty) return;
+    Navigator.pop(context, v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Kullanıcı Adını Düzenle'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _submit(),
+        decoration: const InputDecoration(
+          labelText: 'Kullanıcı adı',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('İptal'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Kaydet'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChangePasswordDialog extends StatefulWidget {
+  const _ChangePasswordDialog();
+
+  @override
+  State<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends State<_ChangePasswordDialog> {
+  final _oldController = TextEditingController();
+  final _newController = TextEditingController();
+  bool _obscureOld = true;
+  bool _obscureNew = true;
+
+  @override
+  void dispose() {
+    _oldController.dispose();
+    _newController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final oldP = _oldController.text;
+    final newP = _newController.text;
+    if (oldP.isEmpty || newP.isEmpty) return;
+    Navigator.pop(context, (oldPwd: oldP, newPwd: newP));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Şifre Değiştir'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _oldController,
+            obscureText: _obscureOld,
+            decoration: InputDecoration(
+              labelText: 'Eski şifre',
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: Icon(_obscureOld
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined),
+                onPressed: () => setState(() => _obscureOld = !_obscureOld),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _newController,
+            obscureText: _obscureNew,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _submit(),
+            decoration: InputDecoration(
+              labelText: 'Yeni şifre',
+              border: const OutlineInputBorder(),
+              suffixIcon: IconButton(
+                icon: Icon(_obscureNew
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined),
+                onPressed: () => setState(() => _obscureNew = !_obscureNew),
+              ),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('İptal'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Değiştir'),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteAccountWarningDialog extends StatelessWidget {
+  const _DeleteAccountWarningDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return AlertDialog(
+      icon: Icon(Icons.warning_amber_rounded, color: cs.error, size: 40),
+      title: const Text('Hesabınızı silmek üzeresiniz'),
+      content: const Text(
+        'Hesabınız ve tüm konuşma geçmişiniz kalıcı olarak silinecek. '
+        'Bu işlem geri alınamaz.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('İptal'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          style: FilledButton.styleFrom(
+            backgroundColor: cs.error,
+            foregroundColor: cs.onError,
+          ),
+          child: const Text('Devam Et'),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteAccountConfirmDialog extends StatefulWidget {
+  const _DeleteAccountConfirmDialog();
+
+  @override
+  State<_DeleteAccountConfirmDialog> createState() =>
+      _DeleteAccountConfirmDialogState();
+}
+
+class _DeleteAccountConfirmDialogState
+    extends State<_DeleteAccountConfirmDialog> {
+  static const String _confirmPhrase = 'HESAP SİL';
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final canDelete = _controller.text == _confirmPhrase;
+    return AlertDialog(
+      title: const Text('Son onay'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Onaylamak için aşağıya "$_confirmPhrase" yazın.',
+            style: const TextStyle(fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('İptal'),
+        ),
+        FilledButton(
+          onPressed: canDelete ? () => Navigator.pop(context, true) : null,
+          style: FilledButton.styleFrom(
+            backgroundColor: cs.error,
+            foregroundColor: cs.onError,
+          ),
+          child: const Text('Hesabı Sil'),
+        ),
+      ],
     );
   }
 }

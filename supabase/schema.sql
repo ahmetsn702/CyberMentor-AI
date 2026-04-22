@@ -72,3 +72,24 @@ create policy messages_delete_own on public.messages
       where c.id = messages.conversation_id and c.user_id = auth.uid()
     )
   );
+
+-- Allow an authenticated user to delete their own auth.users row.
+-- conversations + messages are removed via FK on delete cascade.
+-- SECURITY DEFINER runs as the function owner (postgres) so the call can
+-- reach auth.users, but the body restricts the delete to auth.uid().
+create or replace function public.delete_user()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+  delete from auth.users where id = auth.uid();
+end;
+$$;
+
+revoke execute on function public.delete_user() from public;
+grant execute on function public.delete_user() to authenticated;
