@@ -30,6 +30,10 @@ class _ChatPageState extends State<ChatPage> {
   bool _isLoading = false;
   String? _conversationId;
   RealtimeChannel? _channel;
+  // AI_BUSY (Edge Function 503) durumunda gösterilen retry banner mesajı.
+  // Null = banner gizli. Yeni mesaj gönderilirken veya retry başlatılınca
+  // null'a sıfırlanır.
+  String? _retryableError;
 
   @override
   void initState() {
@@ -222,6 +226,7 @@ class _ChatPageState extends State<ChatPage> {
     setState(() {
       _messages.add({'role': 'user', 'text': text});
       _isLoading = true;
+      _retryableError = null;
     });
     _apiHistory.add({'role': 'user', 'content': text});
     _scrollToBottom();
@@ -233,20 +238,75 @@ class _ChatPageState extends State<ChatPage> {
     }
     await _persistMessage('user', text);
 
-    final reply = await ChatService.sendMessage(
+    final result = await ChatService.sendMessage(
       _apiHistory,
       widget.category,
       challengeId: widget.challenge?.id,
     );
+    await _handleResult(result);
+  }
 
-    _apiHistory.add({'role': 'assistant', 'content': reply});
+  /// Banner üzerindeki "Tekrar dene" → son user mesajını re-send eder.
+  /// _apiHistory zaten doğru durumda (son entry user); yeni mesaj/persist yok.
+  Future<void> _retryLastMessage() async {
+    if (_isLoading) return;
+    if (_apiHistory.isEmpty || _apiHistory.last['role'] != 'user') return;
+
     setState(() {
-      _messages.add({'role': 'assistant', 'text': reply});
-      _isLoading = false;
+      _isLoading = true;
+      _retryableError = null;
     });
     _scrollToBottom();
 
-    await _persistMessage('assistant', reply);
+    final result = await ChatService.sendMessage(
+      _apiHistory,
+      widget.category,
+      challengeId: widget.challenge?.id,
+    );
+    await _handleResult(result);
+  }
+
+  /// Send/retry sonrası ortak işleme. Sealed pattern match: success →
+  /// asistan mesajı + persist; busy/rateLimited → banner + apiHistory'i
+  /// koru (retry için); error → snackbar + persist etme.
+  ///
+  /// Busy ve RateLimited UI'da aynı banner'ı paylaşır — ikisi de
+  /// "geçici, beklenip tekrar denenebilir" semantiğinde, mesaj farklı.
+  Future<void> _handleResult(ChatResult result) async {
+    if (!mounted) return;
+    switch (result) {
+      case ChatSuccess(:final reply):
+        _apiHistory.add({'role': 'assistant', 'content': reply});
+        setState(() {
+          _messages.add({'role': 'assistant', 'text': reply});
+          _isLoading = false;
+          _retryableError = null;
+        });
+        _scrollToBottom();
+        await _persistMessage('assistant', reply);
+      case ChatBusy(:final message):
+        setState(() {
+          _isLoading = false;
+          _retryableError = message;
+        });
+      case ChatRateLimited(:final message):
+        setState(() {
+          _isLoading = false;
+          _retryableError = message;
+        });
+      case ChatError(:final message):
+        setState(() {
+          _isLoading = false;
+          _retryableError = null;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    }
   }
 
   @override
@@ -258,6 +318,46 @@ class _ChatPageState extends State<ChatPage> {
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Widget _buildRetryBanner(String message) {
+    // Amber: error red'inden ayrışsın — bu transient bir durum, kalıcı bir
+    // hata değil. Aynı renk kodu challenge difficulty "Orta" badge'inde de
+    // var (intentional: "warning" semantik tutarlılığı).
+    const amber = Color(0xFFD97706);
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+      padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+      decoration: BoxDecoration(
+        color: amber.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: amber.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: amber, size: 22),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontSize: 13,
+                height: 1.3,
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          TextButton.icon(
+            onPressed: _retryLastMessage,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Tekrar dene'),
+            style: TextButton.styleFrom(foregroundColor: amber),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -318,6 +418,9 @@ class _ChatPageState extends State<ChatPage> {
                 ],
               ),
             ),
+          // Retry banner — AI_BUSY (transient). Mutually exclusive with the
+          // loading indicator: _retryableError only set when _isLoading false.
+          if (_retryableError != null) _buildRetryBanner(_retryableError!),
           // Message input
           Container(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
