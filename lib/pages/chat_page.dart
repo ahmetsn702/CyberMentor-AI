@@ -331,8 +331,23 @@ class _ChatPageState extends State<ChatPage> {
                   style: FilledButton.styleFrom(
                     shape: const CircleBorder(),
                     padding: const EdgeInsets.all(14),
+                    // Keep primary color while spinner is shown, instead of
+                    // the muted "disabled" look.
+                    disabledBackgroundColor: colorScheme.primary,
+                    disabledForegroundColor: colorScheme.onPrimary,
                   ),
-                  child: const Icon(Icons.send_rounded),
+                  child: _isLoading
+                      ? SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              colorScheme.onPrimary,
+                            ),
+                          ),
+                        )
+                      : const Icon(Icons.send_rounded),
                 ),
               ],
             ),

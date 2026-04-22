@@ -73,7 +73,8 @@ class _ProfilePageState extends State<ProfilePage> {
       await Supabase.instance.client.auth.updateUser(
         UserAttributes(data: {'display_name': newName}),
       );
-      if (mounted) setState(() {});
+      // The finally setState below also rebuilds, picking up the new metadata
+      // through the _displayName getter — no separate rebuild needed here.
       _showSuccess('Kullanıcı adı güncellendi.');
     } on AuthException catch (e) {
       _showError(e.message);
@@ -198,11 +199,8 @@ class _ProfilePageState extends State<ProfilePage> {
               icon: Icons.person_outline_rounded,
               title: 'Kullanıcı Adı',
               value: _displayName.isEmpty ? 'Belirtilmedi' : _displayName,
-              trailing: IconButton(
-                icon: const Icon(Icons.edit_outlined),
-                tooltip: 'Düzenle',
-                onPressed: _isLoading ? null : _editDisplayName,
-              ),
+              trailing: const Icon(Icons.edit_outlined),
+              onTap: _isLoading ? null : _editDisplayName,
             ),
             _ProfileTile(
               icon: Icons.email_outlined,
@@ -217,7 +215,19 @@ class _ProfilePageState extends State<ProfilePage> {
             _ProfileTile(
               icon: Icons.chat_bubble_outline_rounded,
               title: 'Toplam Sohbet',
-              value: _totalConversations?.toString() ?? '...',
+              valueWidget: _totalConversations == null
+                  ? const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 4),
+                      child: SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : Text(
+                      _totalConversations.toString(),
+                      style: const TextStyle(fontSize: 16),
+                    ),
             ),
             _ProfileTile(
               icon: Icons.info_outline_rounded,
@@ -240,6 +250,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 label: const Text('Şifre Değiştir'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
+                  minimumSize: const Size.fromHeight(48),
                 ),
               ),
             ),
@@ -254,6 +265,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   backgroundColor: colorScheme.error,
                   foregroundColor: colorScheme.onError,
                   padding: const EdgeInsets.symmetric(vertical: 14),
+                  minimumSize: const Size.fromHeight(48),
                 ),
               ),
             ),
@@ -272,6 +284,7 @@ class _ProfilePageState extends State<ProfilePage> {
                 style: OutlinedButton.styleFrom(
                   side: BorderSide(color: colorScheme.error),
                   padding: const EdgeInsets.symmetric(vertical: 14),
+                  minimumSize: const Size.fromHeight(48),
                 ),
               ),
             ),
@@ -285,19 +298,25 @@ class _ProfilePageState extends State<ProfilePage> {
 class _ProfileTile extends StatelessWidget {
   final IconData icon;
   final String title;
-  final String value;
+  final String? value;
+  final Widget? valueWidget;
   final Widget? trailing;
+  final VoidCallback? onTap;
 
   const _ProfileTile({
     required this.icon,
     required this.title,
-    required this.value,
+    this.value,
+    this.valueWidget,
     this.trailing,
-  });
+    this.onTap,
+  }) : assert(value != null || valueWidget != null,
+            'Provide either value or valueWidget.');
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(12));
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
       child: ListTile(
@@ -306,15 +325,12 @@ class _ProfileTile extends StatelessWidget {
           title,
           style: const TextStyle(fontSize: 13, color: Colors.grey),
         ),
-        subtitle: Text(
-          value,
-          style: const TextStyle(fontSize: 16),
-        ),
+        subtitle: valueWidget ??
+            Text(value ?? '', style: const TextStyle(fontSize: 16)),
         trailing: trailing,
+        onTap: onTap,
         tileColor: colorScheme.surfaceContainerHighest,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: shape,
       ),
     );
   }
