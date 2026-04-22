@@ -93,3 +93,18 @@ $$;
 
 revoke execute on function public.delete_user() from public;
 grant execute on function public.delete_user() to authenticated;
+
+-- Per-user request log used by the chat Edge Function for rate limiting
+-- (10 requests per rolling 60s). The function trims rows older than the
+-- window before counting, so the table stays bounded per user.
+-- No RLS policies are defined: the function uses the service_role key, and
+-- regular clients are denied by default once RLS is enabled.
+create table if not exists public.rate_limits (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  request_at timestamptz not null default now()
+);
+
+create index if not exists rate_limits_user_request_idx
+  on public.rate_limits (user_id, request_at desc);
+
+alter table public.rate_limits enable row level security;

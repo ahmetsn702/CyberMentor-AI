@@ -1,0 +1,8 @@
+# Gateway-level JWT verification is disabled for the chat function because
+# this project uses ES256-signed JWTs and the gateway's default HS256 path
+# rejects them with 401 before the request ever reaches our code. The
+# function itself (supabase/functions/chat/index.ts) still verifies the JWT
+# via supabase-js's auth.getUser(), which handles ES256 correctly — so the
+# auth check moves from the gateway into our own code, security unchanged.
+[functions.chat]
+verify_jwt = false

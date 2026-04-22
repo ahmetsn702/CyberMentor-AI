@@ -1,6 +1,9 @@
 # Environment variables (do not commit these - add your own locally)
 .env
 
+# Supabase CLI local cache (project-ref, version stamps, linked-project info)
+supabase/.temp/
+
 # Miscellaneous
 *.class
 *.log

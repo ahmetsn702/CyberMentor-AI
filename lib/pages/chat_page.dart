@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../services/gemini_service.dart';
+import '../services/chat_service.dart';
 
 class ChatPage extends StatefulWidget {
   final String category;
@@ -37,7 +37,7 @@ class _ChatPageState extends State<ChatPage> {
     } else {
       _messages.add({
         'role': 'assistant',
-        'text': GeminiService.getWelcomeMessage(widget.category),
+        'text': ChatService.getWelcomeMessage(widget.category),
       });
     }
   }
@@ -208,7 +208,7 @@ class _ChatPageState extends State<ChatPage> {
     }
     await _persistMessage('user', text);
 
-    final reply = await GeminiService.sendMessage(
+    final reply = await ChatService.sendMessage(
       _apiHistory,
       widget.category,
     );
